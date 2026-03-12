@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Randomisarr</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="page-header hero-header">
+        <div>
+          <p class="eyebrow">Drand-powered library roulette</p>
+          <h1>Randomisarr</h1>
+          <p class="hero-copy">
+            Pull a verifiably random movie or show from Radarr and Sonarr, then let the wheel
+            settle the argument.
+          </p>
+        </div>
+
+        <div class="header-actions">
+          <a class="ghost-button" href="/settings.html">Settings</a>
+          <button id="logout-button" class="ghost-button" type="button">Log Out</button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="control-panel" aria-label="Spin controls">
+          <div class="toggle-group">
+            <label class="toggle">
+              <input type="checkbox" id="include-movies" checked />
+              <span>Include Movies</span>
+            </label>
+
+            <label class="toggle">
+              <input type="checkbox" id="include-shows" checked />
+              <span>Include TV Shows</span>
+            </label>
+          </div>
+
+          <div class="field-group compact-field">
+            <label for="watch-mode">Watch Filter</label>
+            <select id="watch-mode" name="watchMode">
+              <option value="everything">Everything</option>
+              <option value="unwatched">Unwatched Only</option>
+            </select>
+          </div>
+
+          <section id="library-filter-section" class="library-filter hidden" aria-label="Library filter">
+            <div class="library-filter-header">
+              <label class="library-filter-label">Libraries</label>
+              <span id="library-source-note" class="library-source-note"></span>
+            </div>
+
+            <label class="toggle toggle-compact">
+              <input type="checkbox" id="all-libraries" checked />
+              <span>All Libraries</span>
+            </label>
+
+            <div id="library-options" class="library-options"></div>
+          </section>
+
+          <button id="spin-button" class="spin-button" type="button">SPIN!</button>
+
+          <p id="status-message" class="status-message" aria-live="polite">
+            Ready to fetch 50 titles from your libraries.
+          </p>
+        </section>
+
+        <section class="wheel-panel" aria-label="Random selection wheel">
+          <div class="wheel-frame">
+            <div class="pointer" aria-hidden="true"></div>
+            <canvas id="wheel-canvas" width="820" height="820">
+              Your browser does not support the canvas element.
+            </canvas>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="result-modal" class="result-modal hidden" aria-live="polite">
+      <div class="result-card">
+        <button id="close-result" class="close-button" type="button" aria-label="Close result">
+          ×
+        </button>
+        <p class="result-kicker">Winner</p>
+        <h2 id="result-title">Awaiting spin...</h2>
+        <p id="result-type" class="result-type"></p>
+        <img id="result-poster" src="" alt="" />
+        <p id="result-empty-poster" class="result-empty-poster hidden">
+          No poster available for this title.
+        </p>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/2.1.3/TweenMax.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/zarocknz/javascript-winwheel@2.8.0/Winwheel.min.js"></script>
+    <script src="./app.js" defer></script>
+  </body>
+</html>

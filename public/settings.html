@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Randomisarr Settings</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">Configuration</p>
+          <h1 class="page-title">Settings</h1>
+        </div>
+
+        <div class="header-actions">
+          <a class="ghost-button" href="/index.html">Back To Wheel</a>
+          <button id="logout-button" class="ghost-button" type="button">Log Out</button>
+        </div>
+      </header>
+
+      <main class="settings-layout">
+        <section class="settings-card">
+          <h2>Media Server Connections</h2>
+          <form id="api-settings-form" class="settings-form">
+            <div class="field-grid">
+              <div class="field-group">
+                <label for="radarr-url">Radarr URL</label>
+                <input id="radarr-url" name="radarrUrl" type="url" placeholder="http://radarr.local:7878" />
+              </div>
+
+              <div class="field-group">
+                <label for="radarr-api-key">Radarr API Key</label>
+                <input id="radarr-api-key" name="radarrApiKey" type="password" />
+              </div>
+
+              <div class="field-group">
+                <label for="sonarr-url">Sonarr URL</label>
+                <input id="sonarr-url" name="sonarrUrl" type="url" placeholder="http://sonarr.local:8989" />
+              </div>
+
+              <div class="field-group">
+                <label for="sonarr-api-key">Sonarr API Key</label>
+                <input id="sonarr-api-key" name="sonarrApiKey" type="password" />
+              </div>
+
+              <div class="field-group">
+                <label for="selection-count">Wheel Selection Count</label>
+                <input
+                  id="selection-count"
+                  name="selectionCount"
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="Leave blank to pull all matching items"
+                />
+              </div>
+
+              <div class="field-group">
+                <label for="watch-mode">Watch Filter</label>
+                <select id="watch-mode" name="watchMode">
+                  <option value="everything">Everything</option>
+                  <option value="unwatched">Unwatched Only</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="watch-source">Watch-State Provider</label>
+                <select id="watch-source" name="watchSource">
+                  <option value="auto">Auto: Emby, then Jellyfin, then Plex</option>
+                  <option value="emby">Emby Only</option>
+                  <option value="jellyfin">Jellyfin Only</option>
+                  <option value="plex">Plex Only</option>
+                  <option value="none">None</option>
+                </select>
+              </div>
+            </div>
+
+            <button class="spin-button auth-button" type="submit">Save API Settings</button>
+            <p class="settings-note">
+              Emby is the primary watch-state source. If Auto is selected, Randomisarr falls back
+              to Jellyfin, then Plex. Radarr and Sonarr remain the library source.
+            </p>
+          </form>
+        </section>
+
+        <section class="settings-card">
+          <h2>Watch-State Providers</h2>
+          <div class="provider-stack">
+            <div class="provider-card provider-card-primary">
+              <h3>Emby</h3>
+              <div class="field-grid">
+                <div class="field-group">
+                  <label for="emby-url">Emby Base URL</label>
+                  <input id="emby-url" name="embyUrl" type="url" placeholder="http://emby.local:8096/emby" />
+                </div>
+
+                <div class="field-group">
+                  <label for="emby-api-key">Emby API Key</label>
+                  <input id="emby-api-key" name="embyApiKey" type="password" />
+                </div>
+
+                <div class="field-group">
+                  <label for="emby-user-id">Emby User ID Or Username</label>
+                  <input id="emby-user-id" name="embyUserId" type="text" />
+                </div>
+              </div>
+
+              <div class="provider-actions">
+                <button id="test-emby-button" class="ghost-button" type="button">Test Emby</button>
+              </div>
+              <p id="emby-test-status" class="settings-note provider-status"></p>
+            </div>
+
+            <div class="provider-card">
+              <h3>Jellyfin</h3>
+              <div class="field-grid">
+                <div class="field-group">
+                  <label for="jellyfin-url">Jellyfin Base URL</label>
+                  <input id="jellyfin-url" name="jellyfinUrl" type="url" placeholder="http://jellyfin.local:8096" />
+                </div>
+
+                <div class="field-group">
+                  <label for="jellyfin-api-key">Jellyfin API Key</label>
+                  <input id="jellyfin-api-key" name="jellyfinApiKey" type="password" />
+                </div>
+
+                <div class="field-group">
+                  <label for="jellyfin-user-id">Jellyfin User ID</label>
+                  <input id="jellyfin-user-id" name="jellyfinUserId" type="text" />
+                </div>
+              </div>
+            </div>
+
+            <div class="provider-card">
+              <h3>Plex</h3>
+              <div class="field-grid">
+                <div class="field-group">
+                  <label for="plex-url">Plex Base URL</label>
+                  <input id="plex-url" name="plexUrl" type="url" placeholder="http://plex.local:32400" />
+                </div>
+
+                <div class="field-group">
+                  <label for="plex-token">Plex User Token</label>
+                  <input id="plex-token" name="plexToken" type="password" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-card">
+          <h2>Admin Access</h2>
+          <form id="account-settings-form" class="settings-form">
+            <div class="field-grid">
+              <div class="field-group">
+                <label for="username">Username</label>
+                <input id="username" name="username" type="text" autocomplete="username" required />
+              </div>
+
+              <div class="field-group">
+                <label for="new-password">New Password</label>
+                <input
+                  id="new-password"
+                  name="newPassword"
+                  type="password"
+                  autocomplete="new-password"
+                  minlength="8"
+                  placeholder="Leave blank to keep current password"
+                />
+              </div>
+            </div>
+
+            <button class="spin-button auth-button" type="submit">Save Access Settings</button>
+          </form>
+        </section>
+
+        <p id="settings-status" class="status-message settings-status" aria-live="polite"></p>
+      </main>
+    </div>
+
+    <script src="./settings.js" defer></script>
+  </body>
+</html>

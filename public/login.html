@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Randomisarr Login</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="auth-shell">
+      <section class="auth-card">
+        <p class="eyebrow">Randomisarr Access</p>
+        <h1 id="auth-title">Sign in</h1>
+        <p id="auth-copy" class="auth-copy">
+          Authenticate before accessing the wheel or changing library settings.
+        </p>
+
+        <form id="auth-form" class="settings-form">
+          <div class="field-group">
+            <label for="username">Username</label>
+            <input id="username" name="username" type="text" autocomplete="username" required />
+          </div>
+
+          <div class="field-group">
+            <label for="password">Password</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              minlength="8"
+              required
+            />
+          </div>
+
+          <div id="setup-fields" class="hidden">
+            <div class="field-group">
+              <label for="radarr-url">Radarr URL</label>
+              <input id="radarr-url" name="radarrUrl" type="url" placeholder="http://radarr.local:7878" />
+            </div>
+
+            <div class="field-group">
+              <label for="radarr-api-key">Radarr API Key</label>
+              <input id="radarr-api-key" name="radarrApiKey" type="password" />
+            </div>
+
+            <div class="field-group">
+              <label for="sonarr-url">Sonarr URL</label>
+              <input id="sonarr-url" name="sonarrUrl" type="url" placeholder="http://sonarr.local:8989" />
+            </div>
+
+            <div class="field-group">
+              <label for="sonarr-api-key">Sonarr API Key</label>
+              <input id="sonarr-api-key" name="sonarrApiKey" type="password" />
+            </div>
+
+            <div class="field-group">
+              <label for="selection-count">Wheel Selection Count</label>
+              <input
+                id="selection-count"
+                name="selectionCount"
+                type="number"
+                min="1"
+                step="1"
+                placeholder="Leave blank to pull all matching items"
+              />
+            </div>
+          </div>
+
+          <button id="auth-submit" class="spin-button auth-button" type="submit">Sign In</button>
+          <p id="auth-status" class="status-message" aria-live="polite"></p>
+        </form>
+      </section>
+    </main>
+
+    <script src="./login.js" defer></script>
+  </body>
+</html>
