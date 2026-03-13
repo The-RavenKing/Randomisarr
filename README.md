@@ -97,6 +97,8 @@ Run the smoke tests with:
 npm test
 ```
 
+The same suite now runs in GitHub Actions on every push and pull request.
+
 The test suite launches the real server against a temporary data directory and verifies:
 
 - public health and auth status
