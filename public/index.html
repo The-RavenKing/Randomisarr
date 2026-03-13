@@ -25,6 +25,9 @@
         </div>
 
         <div class="header-actions">
+          <button id="mute-button" class="ghost-button" type="button" aria-pressed="false">
+            Tick Sound On
+          </button>
           <a class="ghost-button" href="/settings.html">Settings</a>
           <button id="logout-button" class="ghost-button" type="button">Log Out</button>
         </div>
@@ -69,14 +72,14 @@
           <button id="spin-button" class="spin-button" type="button">SPIN!</button>
 
           <p id="status-message" class="status-message" aria-live="polite">
-            Ready to fetch 50 titles from your libraries.
+            Ready to fetch titles from your libraries.
           </p>
         </section>
 
         <section class="wheel-panel" aria-label="Random selection wheel">
-          <div class="wheel-frame">
-            <div class="pointer" aria-hidden="true"></div>
-            <canvas id="wheel-canvas" width="820" height="820">
+          <div id="wheel-wrapper" class="wheel-wrapper">
+            <div id="pointer" class="wheel-pointer" aria-hidden="true">▼</div>
+            <canvas id="canvas" width="400" height="400">
               Your browser does not support the canvas element.
             </canvas>
           </div>

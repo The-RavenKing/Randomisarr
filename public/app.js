@@ -6,6 +6,7 @@ const libraryFilterSection = document.getElementById('library-filter-section');
 const librarySourceNote = document.getElementById('library-source-note');
 const allLibrariesCheckbox = document.getElementById('all-libraries');
 const libraryOptions = document.getElementById('library-options');
+const wheelCanvas = document.getElementById('canvas');
 const statusMessage = document.getElementById('status-message');
 const resultModal = document.getElementById('result-modal');
 const resultTitle = document.getElementById('result-title');
@@ -13,29 +14,45 @@ const resultType = document.getElementById('result-type');
 const resultPoster = document.getElementById('result-poster');
 const resultEmptyPoster = document.getElementById('result-empty-poster');
 const closeResultButton = document.getElementById('close-result');
+const muteButton = document.getElementById('mute-button');
 const logoutButton = document.getElementById('logout-button');
 
-const SEGMENT_COLORS = ['#132235', '#18304a', '#102b2f'];
+const SEGMENT_COLORS = ['#722F37', '#222226', '#1A2421', '#2F343B', '#8B7355'];
 const SPIN_DURATION_SECONDS = 6;
 const SPIN_TURNS = 10;
-const SEGMENT_TEXT_MAX_LENGTH = 18;
+const SEGMENT_TEXT_MAX_LENGTH = 14;
+const WHEEL_TEXT_COLOR = '#ffffff';
+const MAX_VISUAL_SEGMENTS = 25;
+const BASE_CANVAS_SIZE = 400;
+const AUDIO_MUTED_STORAGE_KEY = 'randomisarr_tick_muted';
+const tickSound = new Audio('/tick.wav');
+tickSound.preload = 'auto';
+tickSound.volume = 0.28;
 
 let wheel = null;
 let currentItems = [];
 let availableLibraries = [];
 let activeLibraryProvider = null;
+let lastTickTimestamp = 0;
+let lastTickSegmentNumber = null;
+let isTickMuted = window.localStorage.getItem(AUDIO_MUTED_STORAGE_KEY) === 'true';
 
 function truncateTitle(title, maxLength = SEGMENT_TEXT_MAX_LENGTH) {
   if (title.length <= maxLength) {
     return title;
   }
 
-  return `${title.slice(0, maxLength - 1)}…`;
+  return `${title.slice(0, maxLength - 3)}...`;
 }
 
 function setStatus(message, isError = false) {
   statusMessage.textContent = message;
   statusMessage.style.color = isError ? '#ff98a3' : '';
+}
+
+function updateMuteButton() {
+  muteButton.textContent = isTickMuted ? 'Tick Sound Off' : 'Tick Sound On';
+  muteButton.setAttribute('aria-pressed', String(isTickMuted));
 }
 
 function hideResult() {
@@ -64,26 +81,84 @@ function showResult(winner) {
 function buildSegments(items) {
   return items.map((item, index) => ({
     fillStyle: SEGMENT_COLORS[index % SEGMENT_COLORS.length],
-    textFillStyle: '#edf6ff',
+    textFillStyle: WHEEL_TEXT_COLOR,
     text: truncateTitle(item.title)
   }));
 }
 
+function playTickSound() {
+  if (isTickMuted) {
+    return;
+  }
+
+  const now = Date.now();
+
+  if (now - lastTickTimestamp > 60) {
+    tickSound.currentTime = 0;
+    tickSound.play().catch(() => console.log('Audio play prevented by browser'));
+    lastTickTimestamp = now;
+  }
+}
+
+async function primeTickSound() {
+  if (isTickMuted) {
+    return;
+  }
+
+  const originalVolume = tickSound.volume;
+
+  try {
+    tickSound.volume = 0;
+    tickSound.currentTime = 0;
+    await tickSound.play();
+    tickSound.pause();
+    tickSound.currentTime = 0;
+  } catch {
+    // Ignore autoplay restrictions here; actual ticks will still try to play during the spin.
+  } finally {
+    tickSound.volume = originalVolume;
+  }
+}
+
+function resetTickState() {
+  lastTickTimestamp = 0;
+  lastTickSegmentNumber = null;
+}
+
+function handleWheelAnimationFrame() {
+  if (!wheel || typeof wheel.getIndicatedSegmentNumber !== 'function') {
+    return;
+  }
+
+  const currentSegmentNumber = wheel.getIndicatedSegmentNumber();
+
+  if (!currentSegmentNumber || currentSegmentNumber === lastTickSegmentNumber) {
+    return;
+  }
+
+  lastTickSegmentNumber = currentSegmentNumber;
+  playTickSound();
+}
+
 function createWheel(items, onFinished) {
+  wheelCanvas.width = BASE_CANVAS_SIZE;
+  wheelCanvas.height = BASE_CANVAS_SIZE;
+
   return new Winwheel({
-    canvasId: 'wheel-canvas',
+    canvasId: 'canvas',
     numSegments: items.length,
-    outerRadius: 390,
-    innerRadius: 76,
-    textFontFamily: 'Space Grotesk',
+    outerRadius: 180,
+    innerRadius: 40,
+    textFontFamily: 'Inter',
     textFontSize: 11,
     textFontWeight: '500',
+    textFillStyle: WHEEL_TEXT_COLOR,
     textAlignment: 'outer',
-    textOrientation: 'vertical',
+    textOrientation: 'horizontal',
     textMargin: 10,
-    lineColor: 'rgba(255, 255, 255, 0.12)',
+    lineColor: 'rgba(255, 255, 255, 0.1)',
     lineWidth: 1,
-    strokeStyle: 'rgba(255, 255, 255, 0.18)',
+    strokeStyle: 'rgba(255, 255, 255, 0.1)',
     pointerAngle: 0,
     responsive: true,
     segments: buildSegments(items),
@@ -91,9 +166,13 @@ function createWheel(items, onFinished) {
       type: 'spinToStop',
       duration: SPIN_DURATION_SECONDS,
       spins: SPIN_TURNS,
-      easing: 'Power4.easeOut',
+      easing: 'Power2.easeOut',
       stopAngle: 0,
-      callbackFinished: onFinished
+      callbackAfter: handleWheelAnimationFrame,
+      callbackFinished: () => {
+        resetTickState();
+        onFinished();
+      }
     }
   });
 }
@@ -281,6 +360,27 @@ async function fetchSpinData(includeMovies, includeShows, watchMode, selectedLib
     throw new Error(payload.error || 'Failed to fetch a spin result.');
   }
 
+  const winningIndex = Number.isInteger(payload.winningIndex)
+    ? payload.winningIndex
+    : Number(payload.winning_index);
+
+  if (
+    !Array.isArray(payload.items) ||
+    payload.items.length === 0 ||
+    payload.items.length > MAX_VISUAL_SEGMENTS
+  ) {
+    throw new Error('The backend returned an invalid wheel payload.');
+  }
+
+  if (!Number.isInteger(winningIndex) || winningIndex < 0 || winningIndex >= payload.items.length) {
+    throw new Error('The backend returned an invalid winning index.');
+  }
+
+  if (!payload.winner) {
+    throw new Error('The backend did not return the selected winner.');
+  }
+
+  payload.winningIndex = winningIndex;
   return payload;
 }
 
@@ -300,18 +400,18 @@ async function handleSpin() {
   setStatus('Fetching libraries and latest drand beacon...');
 
   try {
+    await primeTickSound();
     const payload = await fetchSpinData(includeMovies, includeShows, watchMode, selectedLibraryIds);
 
     if (!payload) {
       return;
     }
 
-    const { items, winningIndex, beacon, filter, warnings } = payload;
+    const { items, winningIndex, beacon, filter, warnings, winner, totalPoolSize, wheelSize } = payload;
 
     currentItems = items;
+    resetTickState();
     wheel = createWheel(items, () => {
-      const winner = currentItems[winningIndex];
-
       showResult(winner);
       setStatus(`Stopped on "${winner.title}". drand beacon: ${beacon.randomness.slice(0, 12)}...`);
       spinButton.disabled = false;
@@ -329,10 +429,14 @@ async function handleSpin() {
       filter?.librarySourceUsed && selectedLibraryIds.length > 0
         ? ` Libraries filtered: ${selectedLibraryIds.length}.`
         : '';
+    const poolLabel =
+      totalPoolSize > wheelSize
+        ? ` Winner selected from ${totalPoolSize} titles, visual wheel shows ${wheelSize}.`
+        : ` Pool size: ${totalPoolSize}.`;
     const warningLabel = warnings?.length ? ` Warnings: ${warnings.join(' ')}` : '';
 
     setStatus(
-      `Spinning ${items.length} titles. Beacon locked: ${beacon.randomness.slice(0, 16)}...${filterLabel}${libraryLabel}${warningLabel}`
+      `Spinning ${wheelSize} visual segments. Beacon locked: ${beacon.randomness.slice(0, 16)}...${filterLabel}${libraryLabel}${poolLabel}${warningLabel}`
     );
     wheel.startAnimation();
   } catch (error) {
@@ -343,6 +447,12 @@ async function handleSpin() {
 
 spinButton.addEventListener('click', handleSpin);
 closeResultButton.addEventListener('click', hideResult);
+muteButton.addEventListener('click', () => {
+  isTickMuted = !isTickMuted;
+  tickSound.muted = isTickMuted;
+  window.localStorage.setItem(AUDIO_MUTED_STORAGE_KEY, String(isTickMuted));
+  updateMuteButton();
+});
 logoutButton.addEventListener('click', async () => {
   await fetch('/api/auth/logout', { method: 'POST' });
   window.location.href = '/login.html';
@@ -361,6 +471,8 @@ includeShowsCheckbox.addEventListener('change', syncLibraryVisibility);
 
 async function init() {
   try {
+    tickSound.muted = isTickMuted;
+    updateMuteButton();
     const settings = await fetchSettings();
 
     if (!settings) {

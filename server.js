@@ -19,6 +19,7 @@ const app = express();
 const PORT = Number(process.env.PORT) || 59039;
 const DRAND_LATEST_URL =
   'https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971/public/latest';
+const MAX_VISUAL_WHEEL_ITEMS = 25;
 const SESSION_COOKIE_NAME = 'randomisarr_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const WATCH_PROVIDER_PRIORITY = ['emby', 'jellyfin', 'plex'];
@@ -511,6 +512,35 @@ function cryptoShuffle(items) {
   }
 
   return shuffled;
+}
+
+function buildVisualWheelSubset(pool, winnerIndex, maxVisualItems = MAX_VISUAL_WHEEL_ITEMS) {
+  const winner = pool[winnerIndex];
+
+  if (!winner) {
+    const error = new Error('Unable to build the visual wheel subset for the selected winner.');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  if (pool.length <= maxVisualItems) {
+    return {
+      items: pool,
+      visualWinningIndex: winnerIndex
+    };
+  }
+
+  const decoys = pool.filter((_, index) => index !== winnerIndex);
+  const visualItems = cryptoShuffle(decoys).slice(0, maxVisualItems - 1);
+  visualItems.push(winner);
+
+  const shuffledVisualItems = cryptoShuffle(visualItems);
+  const visualWinningIndex = shuffledVisualItems.findIndex((item) => item.id === winner.id);
+
+  return {
+    items: shuffledVisualItems,
+    visualWinningIndex
+  };
 }
 
 async function fetchLatestDrandBeacon() {
@@ -1597,8 +1627,6 @@ app.get('/api/spin', async (req, res) => {
         ? { providerUsed: librarySourceUsed, matchSet: null }
         : await fetchUnwatchedMatchSet(effectiveWatchMode);
     const eligibleLibrary = matchSet ? filterLibraryByMatchSet(library, matchSet) : library;
-    const configuredSelectionCount = settings.preferences.selectionCount;
-    const subsetSize = configuredSelectionCount ?? eligibleLibrary.length;
 
     if (eligibleLibrary.length === 0) {
       return res.status(400).json({
@@ -1607,17 +1635,30 @@ app.get('/api/spin', async (req, res) => {
       });
     }
 
-    if (eligibleLibrary.length < subsetSize) {
+    const configuredSelectionCount = settings.preferences.selectionCount;
+    const actualPool =
+      configuredSelectionCount === null
+        ? eligibleLibrary
+        : cryptoShuffle(eligibleLibrary).slice(0, configuredSelectionCount);
+
+    if (actualPool.length === 0) {
       return res.status(400).json({
-        error: `Only ${eligibleLibrary.length} matching items are available, which is fewer than the configured selection count of ${subsetSize}.`,
-        available: eligibleLibrary.length
+        error: 'No media was available after applying the current selection count.',
+        available: 0
       });
     }
 
-    const subset = cryptoShuffle(eligibleLibrary).slice(0, subsetSize);
     const randomness = await fetchLatestDrandBeacon();
     const bigIntRandomness = BigInt(`0x${randomness}`);
-    const winningIndex = Number(bigIntRandomness % BigInt(subset.length));
+    const winningIndex = Number(bigIntRandomness % BigInt(actualPool.length));
+    const winner = actualPool[winningIndex];
+    const visualWheel = buildVisualWheelSubset(actualPool, winningIndex);
+
+    if (actualPool.length > MAX_VISUAL_WHEEL_ITEMS) {
+      warnings.push(
+        `The wheel is rendering ${MAX_VISUAL_WHEEL_ITEMS} items for performance, but the winner was selected from all ${actualPool.length} eligible titles.`
+      );
+    }
 
     return res.json({
       beacon: {
@@ -1628,9 +1669,13 @@ app.get('/api/spin', async (req, res) => {
         watchProviderUsed: providerUsed,
         librarySourceUsed
       },
-      items: subset,
-      subsetSize: subset.length,
-      winningIndex,
+      items: visualWheel.items,
+      totalPoolSize: actualPool.length,
+      wheelSize: visualWheel.items.length,
+      winningIndex: visualWheel.visualWinningIndex,
+      winning_index: visualWheel.visualWinningIndex,
+      actualWinningIndex: winningIndex,
+      winner,
       warnings
     });
   } catch (error) {
