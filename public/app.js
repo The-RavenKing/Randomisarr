@@ -95,7 +95,7 @@ function playTickSound() {
 
   if (now - lastTickTimestamp > 60) {
     tickSound.currentTime = 0;
-    tickSound.play().catch(() => console.log('Audio play prevented by browser'));
+    tickSound.play().catch(() => {});
     lastTickTimestamp = now;
   }
 }
@@ -391,7 +391,7 @@ async function handleSpin() {
   const selectedLibraryIds = getSelectedLibraryIds();
 
   if (!includeMovies && !includeShows) {
-    alert('Select at least one library before spinning.');
+    alert('Select at least one media type before spinning.');
     return;
   }
 
@@ -407,7 +407,7 @@ async function handleSpin() {
       return;
     }
 
-    const { items, winningIndex, beacon, filter, warnings, winner, totalPoolSize, wheelSize } = payload;
+    const { items, winningIndex, beacon, filter, warnings, winner, totalPoolSize, wheelSize, franchise } = payload;
 
     currentItems = items;
     resetTickState();
@@ -433,10 +433,13 @@ async function handleSpin() {
       totalPoolSize > wheelSize
         ? ` Winner selected from ${totalPoolSize} titles, visual wheel shows ${wheelSize}.`
         : ` Pool size: ${totalPoolSize}.`;
+    const franchiseLabel = franchise?.applied
+      ? ` Franchise ordering changed the result from "${franchise.originalWinnerTitle}" to "${franchise.resolvedWinnerTitle}".`
+      : '';
     const warningLabel = warnings?.length ? ` Warnings: ${warnings.join(' ')}` : '';
 
     setStatus(
-      `Spinning ${wheelSize} visual segments. Beacon locked: ${beacon.randomness.slice(0, 16)}...${filterLabel}${libraryLabel}${poolLabel}${warningLabel}`
+      `Spinning ${wheelSize} visual segments. Beacon locked: ${beacon.randomness.slice(0, 16)}...${filterLabel}${libraryLabel}${poolLabel}${franchiseLabel}${warningLabel}`
     );
     wheel.startAnimation();
   } catch (error) {

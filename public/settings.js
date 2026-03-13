@@ -3,16 +3,58 @@ const accountSettingsForm = document.getElementById('account-settings-form');
 const settingsStatus = document.getElementById('settings-status');
 const logoutButton = document.getElementById('logout-button');
 const testEmbyButton = document.getElementById('test-emby-button');
+const testJellyfinButton = document.getElementById('test-jellyfin-button');
+const testPlexButton = document.getElementById('test-plex-button');
 const embyTestStatus = document.getElementById('emby-test-status');
+const jellyfinTestStatus = document.getElementById('jellyfin-test-status');
+const plexTestStatus = document.getElementById('plex-test-status');
+
+const providerTestConfigs = {
+  emby: {
+    label: 'Emby',
+    button: testEmbyButton,
+    statusElement: embyTestStatus,
+    buildPayload: () => ({
+      embyUrl: document.getElementById('emby-url').value,
+      embyApiKey: document.getElementById('emby-api-key').value,
+      embyUserId: document.getElementById('emby-user-id').value
+    })
+  },
+  jellyfin: {
+    label: 'Jellyfin',
+    button: testJellyfinButton,
+    statusElement: jellyfinTestStatus,
+    buildPayload: () => ({
+      jellyfinUrl: document.getElementById('jellyfin-url').value,
+      jellyfinApiKey: document.getElementById('jellyfin-api-key').value,
+      jellyfinUserId: document.getElementById('jellyfin-user-id').value
+    })
+  },
+  plex: {
+    label: 'Plex',
+    button: testPlexButton,
+    statusElement: plexTestStatus,
+    buildPayload: () => ({
+      plexUrl: document.getElementById('plex-url').value,
+      plexToken: document.getElementById('plex-token').value
+    })
+  }
+};
 
 function setStatus(message, isError = false) {
   settingsStatus.textContent = message;
   settingsStatus.style.color = isError ? '#ff98a3' : '';
 }
 
-function setEmbyStatus(message, isError = false) {
-  embyTestStatus.textContent = message;
-  embyTestStatus.style.color = isError ? '#ff98a3' : '';
+function setProviderStatus(providerName, message, isError = false) {
+  const config = providerTestConfigs[providerName];
+
+  if (!config?.statusElement) {
+    return;
+  }
+
+  config.statusElement.textContent = message;
+  config.statusElement.style.color = isError ? '#ff98a3' : '';
 }
 
 async function handleAuthFailure(response, payload) {
@@ -41,21 +83,108 @@ async function fetchSettings() {
 
 function populateForms(settings) {
   document.getElementById('radarr-url').value = settings.radarr.url || '';
-  document.getElementById('radarr-api-key').value = settings.radarr.apiKey || '';
+  document.getElementById('radarr-api-key').value = '';
   document.getElementById('sonarr-url').value = settings.sonarr.url || '';
-  document.getElementById('sonarr-api-key').value = settings.sonarr.apiKey || '';
+  document.getElementById('sonarr-api-key').value = '';
   document.getElementById('emby-url').value = settings.providers.emby.url || '';
-  document.getElementById('emby-api-key').value = settings.providers.emby.apiKey || '';
+  document.getElementById('emby-api-key').value = '';
   document.getElementById('emby-user-id').value = settings.providers.emby.userId || '';
   document.getElementById('jellyfin-url').value = settings.providers.jellyfin.url || '';
-  document.getElementById('jellyfin-api-key').value = settings.providers.jellyfin.apiKey || '';
+  document.getElementById('jellyfin-api-key').value = '';
   document.getElementById('jellyfin-user-id').value = settings.providers.jellyfin.userId || '';
   document.getElementById('plex-url').value = settings.providers.plex.url || '';
-  document.getElementById('plex-token').value = settings.providers.plex.token || '';
+  document.getElementById('plex-token').value = '';
+  document.getElementById('tmdb-access-token').value = '';
   document.getElementById('selection-count').value = settings.preferences.selectionCount ?? '';
   document.getElementById('watch-mode').value = settings.preferences.watchMode || 'everything';
   document.getElementById('watch-source').value = settings.preferences.watchSource || 'auto';
+  document.getElementById('franchise-mode').value = settings.preferences.franchiseMode || 'off';
   document.getElementById('username').value = settings.auth.username || '';
+
+  syncSecretFieldPlaceholders(settings);
+  syncProviderStatuses(settings);
+}
+
+function syncSecretFieldPlaceholders(settings) {
+  updateSecretPlaceholder(
+    'radarr-api-key',
+    settings.radarr.apiKeyConfigured,
+    'Saved key present. Leave blank to keep it.'
+  );
+  updateSecretPlaceholder(
+    'sonarr-api-key',
+    settings.sonarr.apiKeyConfigured,
+    'Saved key present. Leave blank to keep it.'
+  );
+  updateSecretPlaceholder(
+    'emby-api-key',
+    settings.providers.emby.apiKeyConfigured,
+    'Saved key present. Leave blank to keep it.'
+  );
+  updateSecretPlaceholder(
+    'jellyfin-api-key',
+    settings.providers.jellyfin.apiKeyConfigured,
+    'Saved key present. Leave blank to keep it.'
+  );
+  updateSecretPlaceholder(
+    'plex-token',
+    settings.providers.plex.tokenConfigured,
+    'Saved token present. Leave blank to keep it.'
+  );
+  updateSecretPlaceholder(
+    'tmdb-access-token',
+    settings.tmdb.accessTokenConfigured,
+    'Saved token present. Leave blank to keep it.'
+  );
+}
+
+function updateSecretPlaceholder(inputId, isConfigured, configuredPlaceholder) {
+  const input = document.getElementById(inputId);
+
+  if (!input) {
+    return;
+  }
+
+  if (input.dataset.emptyPlaceholder === undefined) {
+    input.dataset.emptyPlaceholder = input.placeholder || '';
+  }
+
+  input.placeholder = isConfigured ? configuredPlaceholder : input.dataset.emptyPlaceholder;
+}
+
+function syncProviderStatuses(settings) {
+  syncProviderStatusMessage(
+    'emby',
+    settings.providers.emby.configured,
+    settings.providers.emby.apiKeyConfigured
+  );
+  syncProviderStatusMessage(
+    'jellyfin',
+    settings.providers.jellyfin.configured,
+    settings.providers.jellyfin.apiKeyConfigured
+  );
+  syncProviderStatusMessage(
+    'plex',
+    settings.providers.plex.configured,
+    settings.providers.plex.tokenConfigured
+  );
+}
+
+function syncProviderStatusMessage(providerName, isConfigured, hasSavedSecret) {
+  if (isConfigured) {
+    setProviderStatus(providerName, 'Saved credentials present. Run a test to verify access.');
+    return;
+  }
+
+  if (hasSavedSecret) {
+    setProviderStatus(
+      providerName,
+      'A saved secret exists, but the rest of this provider still needs to be completed.'
+    );
+    return;
+  }
+
+  setProviderStatus(providerName, 'Not configured yet.');
 }
 
 async function saveSettings(payload, successMessage) {
@@ -100,9 +229,11 @@ apiSettingsForm.addEventListener('submit', async (event) => {
         jellyfinUserId: document.getElementById('jellyfin-user-id').value,
         plexUrl: document.getElementById('plex-url').value,
         plexToken: document.getElementById('plex-token').value,
+        tmdbAccessToken: document.getElementById('tmdb-access-token').value,
         selectionCount: document.getElementById('selection-count').value,
         watchMode: document.getElementById('watch-mode').value,
         watchSource: document.getElementById('watch-source').value,
+        franchiseMode: document.getElementById('franchise-mode').value,
         username: document.getElementById('username').value
       },
       'API settings saved.'
@@ -131,9 +262,11 @@ accountSettingsForm.addEventListener('submit', async (event) => {
         jellyfinUserId: document.getElementById('jellyfin-user-id').value,
         plexUrl: document.getElementById('plex-url').value,
         plexToken: document.getElementById('plex-token').value,
+        tmdbAccessToken: document.getElementById('tmdb-access-token').value,
         selectionCount: document.getElementById('selection-count').value,
         watchMode: document.getElementById('watch-mode').value,
         watchSource: document.getElementById('watch-source').value,
+        franchiseMode: document.getElementById('franchise-mode').value,
         username: document.getElementById('username').value,
         newPassword: document.getElementById('new-password').value
       },
@@ -149,22 +282,24 @@ logoutButton.addEventListener('click', async () => {
   window.location.href = '/login.html';
 });
 
-testEmbyButton.addEventListener('click', async () => {
-  testEmbyButton.disabled = true;
-  setStatus('Testing Emby connection...');
-  setEmbyStatus('Testing Emby connection...');
+async function runProviderTest(providerName) {
+  const config = providerTestConfigs[providerName];
+
+  if (!config) {
+    return;
+  }
+
+  config.button.disabled = true;
+  setStatus(`Testing ${config.label} connection...`);
+  setProviderStatus(providerName, `Testing ${config.label} connection...`);
 
   try {
-    const response = await fetch('/api/providers/test/emby', {
+    const response = await fetch(`/api/providers/test/${providerName}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        embyUrl: document.getElementById('emby-url').value,
-        embyApiKey: document.getElementById('emby-api-key').value,
-        embyUserId: document.getElementById('emby-user-id').value
-      })
+      body: JSON.stringify(config.buildPayload())
     });
     const result = await response.json();
 
@@ -173,17 +308,23 @@ testEmbyButton.addEventListener('click', async () => {
     }
 
     if (!response.ok) {
-      throw new Error(result.error || 'Emby test failed.');
+      throw new Error(result.error || `${config.label} test failed.`);
     }
 
     setStatus(result.message);
-    setEmbyStatus(result.message);
+    setProviderStatus(providerName, result.message);
   } catch (error) {
     setStatus(error.message, true);
-    setEmbyStatus(error.message, true);
+    setProviderStatus(providerName, error.message, true);
   } finally {
-    testEmbyButton.disabled = false;
+    config.button.disabled = false;
   }
+}
+
+Object.keys(providerTestConfigs).forEach((providerName) => {
+  providerTestConfigs[providerName].button.addEventListener('click', async () => {
+    await runProviderTest(providerName);
+  });
 });
 
 async function init() {

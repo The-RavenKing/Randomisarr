@@ -21,7 +21,7 @@ function applyMode(isSetupMode) {
   setupMode = isSetupMode;
   authTitle.textContent = isSetupMode ? 'Initial setup' : 'Sign in';
   authCopy.textContent = isSetupMode
-    ? 'Create the mandatory admin username and password, then save your Radarr and Sonarr connection details.'
+    ? 'Create the mandatory admin username and password. You can optionally add Radarr and Sonarr now, then configure Emby, Jellyfin, Plex, and TMDb from Settings.'
     : 'Authenticate before accessing the wheel or changing library settings.';
   authSubmit.textContent = isSetupMode ? 'Create Admin' : 'Sign In';
   setupFields.classList.toggle('hidden', !isSetupMode);

@@ -81,12 +81,36 @@
                   <option value="none">None</option>
                 </select>
               </div>
+
+              <div class="field-group">
+                <label for="franchise-mode">Movie Franchise Behavior</label>
+                <select id="franchise-mode" name="franchiseMode">
+                  <option value="off">Off</option>
+                  <option value="earliest_unwatched_in_collection">
+                    Earliest Unwatched In Series
+                  </option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="tmdb-access-token">TMDb Read Access Token</label>
+                <input
+                  id="tmdb-access-token"
+                  name="tmdbAccessToken"
+                  type="password"
+                  placeholder="Required for franchise-aware movie ordering"
+                />
+              </div>
             </div>
 
             <button class="spin-button auth-button" type="submit">Save API Settings</button>
             <p class="settings-note">
+              Secret fields are write-only for safety. Leave an API key or token blank to keep the
+              currently saved value.
+            </p>
+            <p class="settings-note">
               Emby is the primary watch-state source. If Auto is selected, Randomisarr falls back
-              to Jellyfin, then Plex. Radarr and Sonarr remain the library source.
+              to Jellyfin, then Plex. TMDb is used only for optional movie-series ordering.
             </p>
           </form>
         </section>
@@ -137,6 +161,13 @@
                   <input id="jellyfin-user-id" name="jellyfinUserId" type="text" />
                 </div>
               </div>
+
+              <div class="provider-actions">
+                <button id="test-jellyfin-button" class="ghost-button" type="button">
+                  Test Jellyfin
+                </button>
+              </div>
+              <p id="jellyfin-test-status" class="settings-note provider-status"></p>
             </div>
 
             <div class="provider-card">
@@ -152,6 +183,11 @@
                   <input id="plex-token" name="plexToken" type="password" />
                 </div>
               </div>
+
+              <div class="provider-actions">
+                <button id="test-plex-button" class="ghost-button" type="button">Test Plex</button>
+              </div>
+              <p id="plex-test-status" class="settings-note provider-status"></p>
             </div>
           </div>
         </section>

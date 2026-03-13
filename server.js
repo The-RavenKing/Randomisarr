@@ -12,11 +12,16 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, 'public');
-const dataDir = path.join(__dirname, 'data');
+const dataDir = process.env.DATA_DIR?.trim()
+  ? path.resolve(process.env.DATA_DIR.trim())
+  : path.join(__dirname, 'data');
 const settingsFilePath = path.join(dataDir, 'settings.json');
 
 const app = express();
-const PORT = Number(process.env.PORT) || 59039;
+app.disable('x-powered-by');
+const parsedPort = Number(process.env.PORT);
+const PORT = Number.isInteger(parsedPort) && parsedPort >= 0 ? parsedPort : 59039;
+const APP_VERSION = process.env.npm_package_version || '1.0.0';
 const DRAND_LATEST_URL =
   'https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971/public/latest';
 const MAX_VISUAL_WHEEL_ITEMS = 25;
@@ -25,9 +30,23 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const WATCH_PROVIDER_PRIORITY = ['emby', 'jellyfin', 'plex'];
 const WATCH_MODES = new Set(['everything', 'unwatched']);
 const WATCH_SOURCES = new Set(['auto', 'none', 'emby', 'jellyfin', 'plex']);
+const FRANCHISE_MODES = new Set(['off', 'earliest_unwatched_in_collection']);
+const TMDB_API_BASE_URL = 'https://api.themoviedb.org/3';
+const CORS_ORIGIN = process.env.CORS_ORIGIN?.trim() ?? '';
+const TRUST_PROXY = readBooleanEnv('TRUST_PROXY');
+const USE_SECURE_COOKIES =
+  process.env.COOKIE_SECURE === undefined
+    ? process.env.NODE_ENV === 'production'
+    : readBooleanEnv('COOKIE_SECURE');
 
 const sessions = new Map();
+const tmdbMovieCache = new Map();
+const tmdbCollectionCache = new Map();
 let settings = createEmptySettings();
+
+if (TRUST_PROXY) {
+  app.set('trust proxy', 1);
+}
 
 function createEmptySettings() {
   return {
@@ -60,12 +79,26 @@ function createEmptySettings() {
         token: ''
       }
     },
+    tmdb: {
+      accessToken: ''
+    },
     preferences: {
       selectionCount: null,
       watchMode: 'everything',
-      watchSource: 'auto'
+      watchSource: 'auto',
+      franchiseMode: 'off'
     }
   };
+}
+
+function readBooleanEnv(name) {
+  const rawValue = process.env[name];
+
+  if (rawValue === undefined) {
+    return false;
+  }
+
+  return ['1', 'true', 'yes', 'on'].includes(String(rawValue).trim().toLowerCase());
 }
 
 function normalizeOptionalNumber(value) {
@@ -108,6 +141,9 @@ function normalizeSettingsShape(rawSettings = {}) {
         token: rawSettings.providers?.plex?.token ?? ''
       }
     },
+    tmdb: {
+      accessToken: rawSettings.tmdb?.accessToken ?? ''
+    },
     preferences: {
       selectionCount: normalizeOptionalNumber(rawSettings.preferences?.selectionCount),
       watchMode: WATCH_MODES.has(rawSettings.preferences?.watchMode)
@@ -115,7 +151,10 @@ function normalizeSettingsShape(rawSettings = {}) {
         : 'everything',
       watchSource: WATCH_SOURCES.has(rawSettings.preferences?.watchSource)
         ? rawSettings.preferences.watchSource
-        : 'auto'
+        : 'auto',
+      franchiseMode: FRANCHISE_MODES.has(rawSettings.preferences?.franchiseMode)
+        ? rawSettings.preferences.franchiseMode
+        : 'off'
     }
   };
 }
@@ -157,17 +196,37 @@ function parseCookies(cookieHeader = '') {
 
 function setSessionCookie(res, token) {
   const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  res.setHeader(
-    'Set-Cookie',
-    `${SESSION_COOKIE_NAME}=${token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${maxAge}`
-  );
+  const cookieAttributes = [
+    `${SESSION_COOKIE_NAME}=${token}`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Strict',
+    `Max-Age=${maxAge}`,
+    'Priority=High'
+  ];
+
+  if (USE_SECURE_COOKIES) {
+    cookieAttributes.push('Secure');
+  }
+
+  res.setHeader('Set-Cookie', cookieAttributes.join('; '));
 }
 
 function clearSessionCookie(res) {
-  res.setHeader(
-    'Set-Cookie',
-    `${SESSION_COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0`
-  );
+  const cookieAttributes = [
+    `${SESSION_COOKIE_NAME}=`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Strict',
+    'Max-Age=0',
+    'Priority=High'
+  ];
+
+  if (USE_SECURE_COOKIES) {
+    cookieAttributes.push('Secure');
+  }
+
+  res.setHeader('Set-Cookie', cookieAttributes.join('; '));
 }
 
 function purgeExpiredSessions() {
@@ -263,31 +322,71 @@ function getRuntimeServiceConfig(serviceName) {
   };
 }
 
+function hasStoredValue(value) {
+  return Boolean(String(value || '').trim());
+}
+
+function resolveStoredSecret(incomingValue, currentValue, preserveWhenBlank = true) {
+  const normalizedIncomingValue = String(incomingValue || '').trim();
+
+  if (normalizedIncomingValue) {
+    return normalizedIncomingValue;
+  }
+
+  return preserveWhenBlank ? String(currentValue || '').trim() : '';
+}
+
 function getClientSettings() {
+  const radarrConfig = getRuntimeServiceConfig('radarr');
+  const sonarrConfig = getRuntimeServiceConfig('sonarr');
+
   return {
     auth: {
       username: settings.auth.username
     },
-    radarr: getRuntimeServiceConfig('radarr'),
-    sonarr: getRuntimeServiceConfig('sonarr'),
+    radarr: {
+      url: radarrConfig.url,
+      apiKey: '',
+      apiKeyConfigured: hasStoredValue(radarrConfig.apiKey),
+      configured: Boolean(radarrConfig.url && radarrConfig.apiKey)
+    },
+    sonarr: {
+      url: sonarrConfig.url,
+      apiKey: '',
+      apiKeyConfigured: hasStoredValue(sonarrConfig.apiKey),
+      configured: Boolean(sonarrConfig.url && sonarrConfig.apiKey)
+    },
     providers: {
       emby: {
-        ...settings.providers.emby,
-        url: normalizeBaseUrl(settings.providers.emby.url)
+        url: normalizeBaseUrl(settings.providers.emby.url),
+        apiKey: '',
+        apiKeyConfigured: hasStoredValue(settings.providers.emby.apiKey),
+        userId: settings.providers.emby.userId,
+        configured: isProviderConfigured('emby')
       },
       jellyfin: {
-        ...settings.providers.jellyfin,
-        url: normalizeBaseUrl(settings.providers.jellyfin.url)
+        url: normalizeBaseUrl(settings.providers.jellyfin.url),
+        apiKey: '',
+        apiKeyConfigured: hasStoredValue(settings.providers.jellyfin.apiKey),
+        userId: settings.providers.jellyfin.userId,
+        configured: isProviderConfigured('jellyfin')
       },
       plex: {
-        ...settings.providers.plex,
-        url: normalizeBaseUrl(settings.providers.plex.url)
+        url: normalizeBaseUrl(settings.providers.plex.url),
+        token: '',
+        tokenConfigured: hasStoredValue(settings.providers.plex.token),
+        configured: isProviderConfigured('plex')
       }
+    },
+    tmdb: {
+      accessToken: '',
+      accessTokenConfigured: hasStoredValue(settings.tmdb.accessToken)
     },
     preferences: {
       selectionCount: settings.preferences.selectionCount,
       watchMode: settings.preferences.watchMode,
       watchSource: settings.preferences.watchSource,
+      franchiseMode: settings.preferences.franchiseMode,
       watchProviderPriority: WATCH_PROVIDER_PRIORITY
     }
   };
@@ -352,6 +451,20 @@ function normalizeWatchSource(value) {
 
   if (!WATCH_SOURCES.has(value)) {
     const error = new Error('Invalid watch provider option.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return value;
+}
+
+function normalizeFranchiseMode(value) {
+  if (!value) {
+    return 'off';
+  }
+
+  if (!FRANCHISE_MODES.has(value)) {
+    const error = new Error('Invalid franchise behavior option.');
     error.statusCode = 400;
     throw error;
   }
@@ -635,6 +748,302 @@ function isProviderConfigured(providerName) {
   );
 }
 
+function isTmdbConfigured() {
+  return Boolean(settings.tmdb.accessToken.trim());
+}
+
+function getTmdbRequestConfig() {
+  const accessToken = settings.tmdb.accessToken.trim();
+
+  if (!accessToken) {
+    const error = new Error('TMDb is not configured.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    headers: {
+      accept: 'application/json',
+      Authorization: `Bearer ${accessToken}`
+    },
+    timeout: 10000
+  };
+}
+
+async function fetchTmdbMovieDetails(tmdbMovieId) {
+  const normalizedId = String(tmdbMovieId || '').trim();
+
+  if (!normalizedId) {
+    return null;
+  }
+
+  if (tmdbMovieCache.has(normalizedId)) {
+    return tmdbMovieCache.get(normalizedId);
+  }
+
+  const response = await axios.get(
+    `${TMDB_API_BASE_URL}/movie/${encodeURIComponent(normalizedId)}`,
+    getTmdbRequestConfig()
+  );
+  const details = response.data ?? null;
+  tmdbMovieCache.set(normalizedId, details);
+  return details;
+}
+
+async function fetchTmdbCollectionDetails(collectionId) {
+  const normalizedId = String(collectionId || '').trim();
+
+  if (!normalizedId) {
+    return null;
+  }
+
+  if (tmdbCollectionCache.has(normalizedId)) {
+    return tmdbCollectionCache.get(normalizedId);
+  }
+
+  const response = await axios.get(
+    `${TMDB_API_BASE_URL}/collection/${encodeURIComponent(normalizedId)}`,
+    getTmdbRequestConfig()
+  );
+  const details = response.data ?? null;
+  tmdbCollectionCache.set(normalizedId, details);
+  return details;
+}
+
+function sortMoviesByReleaseDate(items) {
+  return [...items].sort((left, right) => {
+    const leftDate = left.releaseDate || `${left.year ?? 9999}-12-31`;
+    const rightDate = right.releaseDate || `${right.year ?? 9999}-12-31`;
+
+    if (leftDate !== rightDate) {
+      return leftDate.localeCompare(rightDate);
+    }
+
+    return (left.title || '').localeCompare(right.title || '');
+  });
+}
+
+function isItemUnwatched(item, matchSet) {
+  if (!matchSet) {
+    return false;
+  }
+
+  for (const key of getMatchKeys(item)) {
+    if (matchSet.has(key)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function resolveOptionalUnwatchedMatchSet() {
+  const candidates = getConfiguredProviderNames();
+
+  if (candidates.length === 0) {
+    return {
+      providerUsed: null,
+      matchSet: null,
+      warning: null
+    };
+  }
+
+  const failures = [];
+
+  for (const providerName of candidates) {
+    try {
+      const matchSet =
+        providerName === 'plex'
+          ? await fetchPlexUnwatchedItems()
+          : await fetchMediaBrowserUnwatchedItems(providerName);
+
+      return {
+        providerUsed: providerName,
+        matchSet,
+        warning: null
+      };
+    } catch (error) {
+      failures.push(`${providerName}: ${error.message}`);
+    }
+  }
+
+  return {
+    providerUsed: null,
+    matchSet: null,
+    warning: `Unable to load unwatched items for franchise ordering. ${failures.join(' | ')}`
+  };
+}
+
+function buildFranchisePool({
+  library,
+  librarySourceUsed,
+  watchMode,
+  matchSet
+}) {
+  if (watchMode === 'unwatched' && librarySourceUsed !== 'arr') {
+    return library.filter((item) => item.type === 'movie');
+  }
+
+  if (watchMode === 'unwatched' && matchSet) {
+    return library.filter((item) => item.type === 'movie' && isItemUnwatched(item, matchSet));
+  }
+
+  if (!matchSet) {
+    return [];
+  }
+
+  return library.filter((item) => item.type === 'movie' && isItemUnwatched(item, matchSet));
+}
+
+async function resolveFranchiseWinner({
+  winner,
+  actualPool,
+  library,
+  librarySourceUsed,
+  watchMode,
+  matchSet
+}) {
+  if (
+    settings.preferences.franchiseMode !== 'earliest_unwatched_in_collection' ||
+    !winner ||
+    winner.type !== 'movie'
+  ) {
+    return {
+      winner,
+      winningPool: actualPool,
+      franchise: {
+        applied: false,
+        reason: 'disabled'
+      },
+      warning: null
+    };
+  }
+
+  if (!isTmdbConfigured()) {
+    return {
+      winner,
+      winningPool: actualPool,
+      franchise: {
+        applied: false,
+        reason: 'tmdb_not_configured'
+      },
+      warning: 'TMDb is not configured, so franchise ordering was skipped.'
+    };
+  }
+
+  const winnerTmdbId = winner.externalIds?.tmdb ? String(winner.externalIds.tmdb) : '';
+
+  if (!winnerTmdbId) {
+    return {
+      winner,
+      winningPool: actualPool,
+      franchise: {
+        applied: false,
+        reason: 'missing_tmdb_id'
+      },
+      warning: null
+    };
+  }
+
+  const movieDetails = await fetchTmdbMovieDetails(winnerTmdbId);
+  const collectionId = movieDetails?.belongs_to_collection?.id;
+
+  if (!collectionId) {
+    return {
+      winner,
+      winningPool: actualPool,
+      franchise: {
+        applied: false,
+        reason: 'not_in_collection'
+      },
+      warning: null
+    };
+  }
+
+  const franchisePool = buildFranchisePool({
+    library,
+    librarySourceUsed,
+    watchMode,
+    matchSet
+  });
+
+  if (franchisePool.length === 0) {
+    return {
+      winner,
+      winningPool: actualPool,
+      franchise: {
+        applied: false,
+        reason: 'no_unwatched_pool'
+      },
+      warning:
+        watchMode === 'everything'
+          ? 'Franchise ordering was skipped because unwatched status was unavailable for the selected libraries.'
+          : null
+    };
+  }
+
+  const collectionDetails = await fetchTmdbCollectionDetails(collectionId);
+  const orderedParts = sortMoviesByReleaseDate(
+    (collectionDetails?.parts ?? []).map((part) => ({
+      tmdbId: String(part.id),
+      releaseDate: part.release_date || '',
+      year: part.release_date ? Number.parseInt(part.release_date.slice(0, 4), 10) : null,
+      title: part.title || ''
+    }))
+  );
+
+  const libraryMoviesByTmdbId = new Map(
+    franchisePool
+      .filter((item) => item.externalIds?.tmdb)
+      .map((item) => [String(item.externalIds.tmdb), item])
+  );
+
+  const earliestUnwatchedInCollection = orderedParts
+    .map((part) => libraryMoviesByTmdbId.get(part.tmdbId))
+    .find(Boolean);
+
+  if (!earliestUnwatchedInCollection) {
+    return {
+      winner,
+      winningPool: actualPool,
+      franchise: {
+        applied: false,
+        reason: 'collection_not_in_library'
+      },
+      warning: null
+    };
+  }
+
+  if (earliestUnwatchedInCollection.id === winner.id) {
+    return {
+      winner,
+      winningPool: actualPool,
+      franchise: {
+        applied: false,
+        reason: 'winner_already_earliest'
+      },
+      warning: null
+    };
+  }
+
+  const winningPool = actualPool.some((item) => item.id === earliestUnwatchedInCollection.id)
+    ? actualPool
+    : uniqueBy([...actualPool, earliestUnwatchedInCollection], (item) => item.id);
+
+  return {
+    winner: earliestUnwatchedInCollection,
+    winningPool,
+    franchise: {
+      applied: true,
+      reason: 'earliest_unwatched_in_collection',
+      originalWinnerTitle: winner.title,
+      resolvedWinnerTitle: earliestUnwatchedInCollection.title,
+      collectionName: collectionDetails?.name || movieDetails?.belongs_to_collection?.name || ''
+    },
+    warning: null
+  };
+}
+
 function resolveWatchProviderCandidates() {
   const { watchMode, watchSource } = settings.preferences;
 
@@ -716,6 +1125,38 @@ async function testMediaBrowserProviderConnection(providerName, providerOverride
 
   return {
     totalRecords: response.data?.TotalRecordCount ?? 0
+  };
+}
+
+async function testPlexConnection(providerOverride = null) {
+  const provider = providerOverride ?? settings.providers.plex;
+  const url = normalizeBaseUrl(provider.url);
+  const token = provider.token.trim();
+
+  if (!url || !token) {
+    const error = new Error('Plex URL and token are required.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const response = await axios.get(`${url}/library/sections`, {
+    headers: {
+      Accept: 'application/json'
+    },
+    params: {
+      'X-Plex-Token': token
+    },
+    timeout: 10000
+  });
+
+  const sections = response.data?.MediaContainer?.Directory ?? [];
+  const watchableSections = sections.filter(
+    (section) => section.type === 'movie' || section.type === 'show'
+  );
+
+  return {
+    totalSections: sections.length,
+    watchableSections: watchableSections.length
   };
 }
 
@@ -1300,8 +1741,99 @@ function redirectToEntryPage(_req, res) {
   return res.redirect(destination);
 }
 
-app.use(cors());
+function setProviderTestStatusMessage(providerName, result) {
+  if (providerName === 'plex') {
+    return `Plex connection succeeded. Libraries found: ${result.watchableSections} watchable of ${result.totalSections} total.`;
+  }
+
+  const providerLabel = providerName === 'emby' ? 'Emby' : 'Jellyfin';
+  return `${providerLabel} connection succeeded. Visible media items: ${result.totalRecords}.`;
+}
+
+async function handleProviderTestRequest(req, res, providerNameOverride = null) {
+  try {
+    const providerName = String(providerNameOverride ?? req.params.providerName ?? '').toLowerCase();
+
+    if (!['emby', 'jellyfin', 'plex'].includes(providerName)) {
+      return res.status(404).json({
+        error: 'Unknown provider.'
+      });
+    }
+
+    if (providerName === 'plex') {
+      const { plexUrl = '', plexToken = '' } = req.body;
+
+      validateOptionalHttpUrl('Plex URL', plexUrl);
+
+      const result = await testPlexConnection({
+        url: plexUrl,
+        token: plexToken
+      });
+
+      return res.json({
+        ok: true,
+        message: setProviderTestStatusMessage(providerName, result)
+      });
+    }
+
+    const providerLabel = providerName === 'emby' ? 'Emby' : 'Jellyfin';
+    const { [`${providerName}Url`]: providerUrl = '', [`${providerName}ApiKey`]: providerApiKey = '', [`${providerName}UserId`]: providerUserId = '' } =
+      req.body;
+
+    validateOptionalHttpUrl(`${providerLabel} URL`, providerUrl);
+
+    const result = await testMediaBrowserProviderConnection(providerName, {
+      url: providerUrl,
+      apiKey: providerApiKey,
+      userId: providerUserId
+    });
+
+    return res.json({
+      ok: true,
+      message: setProviderTestStatusMessage(providerName, result)
+    });
+  } catch (error) {
+    const providerName = String(providerNameOverride ?? req.params.providerName ?? 'provider').toLowerCase();
+    const providerLabel =
+      providerName === 'emby'
+        ? 'Emby'
+        : providerName === 'jellyfin'
+          ? 'Jellyfin'
+          : providerName === 'plex'
+            ? 'Plex'
+            : 'Provider';
+    const { statusCode, message } = formatUpstreamError(
+      providerLabel,
+      error,
+      `Unable to verify ${providerLabel} settings.`
+    );
+
+    return res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({
+      error: message
+    });
+  }
+}
+
+if (CORS_ORIGIN) {
+  app.use(
+    cors({
+      origin: CORS_ORIGIN,
+      credentials: true
+    })
+  );
+}
+
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  next();
+});
+
 app.use(express.json());
+app.use('/api', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 
 app.get('/', (req, res) => {
   const session = getSessionFromRequest(req);
@@ -1427,7 +1959,7 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/auth/')) {
+  if (req.path.startsWith('/auth/') || req.path === '/health') {
     return next();
   }
 
@@ -1435,7 +1967,11 @@ app.use('/api', (req, res, next) => {
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    version: APP_VERSION,
+    authConfigured: isAuthConfigured()
+  });
 });
 
 app.get('/api/settings', (_req, res) => {
@@ -1481,59 +2017,77 @@ app.put('/api/settings', async (req, res) => {
       jellyfinUserId = '',
       plexUrl = '',
       plexToken = '',
+      tmdbAccessToken = '',
       selectionCount = settings.preferences.selectionCount,
       watchMode = settings.preferences.watchMode,
       watchSource = settings.preferences.watchSource,
+      franchiseMode = settings.preferences.franchiseMode,
       username = settings.auth.username,
       newPassword = ''
     } = req.body;
+    const normalizedRadarrUrl = normalizeBaseUrl(radarrUrl);
+    const normalizedSonarrUrl = normalizeBaseUrl(sonarrUrl);
+    const normalizedEmbyUrl = normalizeBaseUrl(embyUrl);
+    const normalizedJellyfinUrl = normalizeBaseUrl(jellyfinUrl);
+    const normalizedPlexUrl = normalizeBaseUrl(plexUrl);
+    const normalizedEmbyUserId = embyUserId.trim();
+    const normalizedJellyfinUserId = jellyfinUserId.trim();
+    const normalizedUsername = username.trim();
 
     validateSettingsPayload({
-      radarrUrl,
-      sonarrUrl,
-      embyUrl,
-      jellyfinUrl,
-      plexUrl
+      radarrUrl: normalizedRadarrUrl,
+      sonarrUrl: normalizedSonarrUrl,
+      embyUrl: normalizedEmbyUrl,
+      jellyfinUrl: normalizedJellyfinUrl,
+      plexUrl: normalizedPlexUrl
     });
 
     settings.radarr = {
-      url: normalizeBaseUrl(radarrUrl),
-      apiKey: radarrApiKey.trim()
+      url: normalizedRadarrUrl,
+      apiKey: resolveStoredSecret(radarrApiKey, settings.radarr.apiKey, Boolean(normalizedRadarrUrl))
     };
     settings.sonarr = {
-      url: normalizeBaseUrl(sonarrUrl),
-      apiKey: sonarrApiKey.trim()
+      url: normalizedSonarrUrl,
+      apiKey: resolveStoredSecret(sonarrApiKey, settings.sonarr.apiKey, Boolean(normalizedSonarrUrl))
     };
     settings.providers = {
       emby: {
-        url: normalizeBaseUrl(embyUrl),
-        apiKey: embyApiKey.trim(),
-        userId: embyUserId.trim()
+        url: normalizedEmbyUrl,
+        apiKey: resolveStoredSecret(embyApiKey, settings.providers.emby.apiKey, Boolean(normalizedEmbyUrl)),
+        userId: normalizedEmbyUserId
       },
       jellyfin: {
-        url: normalizeBaseUrl(jellyfinUrl),
-        apiKey: jellyfinApiKey.trim(),
-        userId: jellyfinUserId.trim()
+        url: normalizedJellyfinUrl,
+        apiKey: resolveStoredSecret(
+          jellyfinApiKey,
+          settings.providers.jellyfin.apiKey,
+          Boolean(normalizedJellyfinUrl)
+        ),
+        userId: normalizedJellyfinUserId
       },
       plex: {
-        url: normalizeBaseUrl(plexUrl),
-        token: plexToken.trim()
+        url: normalizedPlexUrl,
+        token: resolveStoredSecret(plexToken, settings.providers.plex.token, Boolean(normalizedPlexUrl))
       }
+    };
+    settings.tmdb = {
+      accessToken: resolveStoredSecret(tmdbAccessToken, settings.tmdb.accessToken, true)
     };
     settings.preferences = {
       selectionCount: normalizeSelectionCount(selectionCount),
       watchMode: normalizeWatchMode(watchMode),
-      watchSource: normalizeWatchSource(watchSource)
+      watchSource: normalizeWatchSource(watchSource),
+      franchiseMode: normalizeFranchiseMode(franchiseMode)
     };
 
-    if (username.trim() !== settings.auth.username) {
-      if (!username.trim()) {
+    if (normalizedUsername !== settings.auth.username) {
+      if (!normalizedUsername) {
         return res.status(400).json({
           error: 'Username cannot be empty.'
         });
       }
 
-      settings.auth.username = username.trim();
+      settings.auth.username = normalizedUsername;
     }
 
     if (newPassword) {
@@ -1554,36 +2108,8 @@ app.put('/api/settings', async (req, res) => {
   }
 });
 
-app.post('/api/providers/test/emby', async (req, res) => {
-  try {
-    const { embyUrl = '', embyApiKey = '', embyUserId = '' } = req.body;
-
-    validateSettingsPayload({
-      embyUrl
-    });
-
-    const result = await testMediaBrowserProviderConnection('emby', {
-      url: embyUrl,
-      apiKey: embyApiKey,
-      userId: embyUserId
-    });
-
-    return res.json({
-      ok: true,
-      message: `Emby connection succeeded. Visible media items: ${result.totalRecords}.`
-    });
-  } catch (error) {
-    const { statusCode, message } = formatUpstreamError(
-      'Emby',
-      error,
-      'Unable to verify Emby settings.'
-    );
-
-    return res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({
-      error: message
-    });
-  }
-});
+app.post('/api/providers/test/emby', async (req, res) => handleProviderTestRequest(req, res, 'emby'));
+app.post('/api/providers/test/:providerName', handleProviderTestRequest);
 
 app.get('/api/spin', async (req, res) => {
   const includeMovies = req.query.includeMovies !== 'false';
@@ -1651,8 +2177,59 @@ app.get('/api/spin', async (req, res) => {
     const randomness = await fetchLatestDrandBeacon();
     const bigIntRandomness = BigInt(`0x${randomness}`);
     const winningIndex = Number(bigIntRandomness % BigInt(actualPool.length));
-    const winner = actualPool[winningIndex];
-    const visualWheel = buildVisualWheelSubset(actualPool, winningIndex);
+    const initiallySelectedWinner = actualPool[winningIndex];
+
+    let franchiseMatchSet = matchSet;
+
+    if (settings.preferences.franchiseMode === 'earliest_unwatched_in_collection') {
+      const needsOptionalUnwatchedData = effectiveWatchMode !== 'unwatched' && !franchiseMatchSet;
+
+      if (needsOptionalUnwatchedData) {
+        const optionalUnwatched = await resolveOptionalUnwatchedMatchSet();
+
+        if (optionalUnwatched.matchSet) {
+          franchiseMatchSet = optionalUnwatched.matchSet;
+        }
+
+        if (optionalUnwatched.warning) {
+          warnings.push(optionalUnwatched.warning);
+        }
+      }
+    }
+
+    let franchiseResolution;
+
+    try {
+      franchiseResolution = await resolveFranchiseWinner({
+        winner: initiallySelectedWinner,
+        actualPool,
+        library,
+        librarySourceUsed,
+        watchMode: effectiveWatchMode,
+        matchSet: franchiseMatchSet
+      });
+    } catch (error) {
+      warnings.push(`Franchise ordering was skipped. ${error.message}`);
+      franchiseResolution = {
+        winner: initiallySelectedWinner,
+        winningPool: actualPool,
+        franchise: {
+          applied: false,
+          reason: 'lookup_failed'
+        },
+        warning: null
+      };
+    }
+    const finalWinner = franchiseResolution.winner;
+    const finalWinningIndex = franchiseResolution.winningPool.findIndex(
+      (item) => item.id === finalWinner.id
+    );
+
+    if (franchiseResolution.warning) {
+      warnings.push(franchiseResolution.warning);
+    }
+
+    const visualWheel = buildVisualWheelSubset(franchiseResolution.winningPool, finalWinningIndex);
 
     if (actualPool.length > MAX_VISUAL_WHEEL_ITEMS) {
       warnings.push(
@@ -1675,7 +2252,8 @@ app.get('/api/spin', async (req, res) => {
       winningIndex: visualWheel.visualWinningIndex,
       winning_index: visualWheel.visualWinningIndex,
       actualWinningIndex: winningIndex,
-      winner,
+      winner: finalWinner,
+      franchise: franchiseResolution.franchise,
       warnings
     });
   } catch (error) {
@@ -1700,8 +2278,9 @@ app.use(express.static(publicDir, { index: false }));
 async function startServer() {
   await loadSettings();
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Randomisarr server listening on http://0.0.0.0:${PORT}`);
+  app.listen(PORT, '0.0.0.0', function onListen() {
+    const { port } = this.address();
+    console.log(`Randomisarr server listening on http://0.0.0.0:${port}`);
   });
 }
 
